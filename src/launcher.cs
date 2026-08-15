@@ -117,7 +117,6 @@ namespace DSHLauncher
         private bool FollowSystem = (Settings.GetString("followSystem", "off") == "on");
         private bool AppModeOpen = (Settings.GetString("appMode", "on") == "on");
         private bool NotifyEnabled = (Settings.GetString("notify", "on") != "off");
-        private bool AppAutoOpened = false;
         private string ListenAddr = "";
         private DateTime LastAddrCheck = DateTime.MinValue;
         private bool ExposureWarned = false;
@@ -295,38 +294,6 @@ namespace DSHLauncher
             }
             catch (Exception ex) { Log("AppWindowExists error: " + ex.Message); }
 
-            try
-            {
-                bool found = false;
-                EnumWindows(delegate(IntPtr hWnd, IntPtr lParam)
-                {
-                    if (!IsWindowVisible(hWnd)) return true;
-                    StringBuilder sb = new StringBuilder(256);
-                    GetWindowText(hWnd, sb, 256);
-                    string title = sb.ToString();
-                    if (title.IndexOf("DeepSeek Harness", StringComparison.OrdinalIgnoreCase) >= 0 &&
-                        title.IndexOf("Launcher", StringComparison.OrdinalIgnoreCase) < 0)
-                    {
-                        uint pid;
-                        GetWindowThreadProcessId(hWnd, out pid);
-                        try
-                        {
-                            string pn = Process.GetProcessById((int)pid).ProcessName.ToLower();
-                            if (pn.Contains("chrome"))
-                            {
-                                Log("AppWindowExists: chrome window found (title: " + title + ")");
-                                found = true;
-                                return false;
-                            }
-                        }
-                        catch { }
-                    }
-                    return true;
-                }, IntPtr.Zero);
-                if (found) return true;
-            }
-            catch (Exception ex) { Log("Window check error: " + ex.Message); }
-
             Log("AppWindowExists: not found");
             return false;
         }
@@ -350,15 +317,6 @@ namespace DSHLauncher
         // ---------------- 窗口拖拽调整大小 ----------------
         [DllImport("user32.dll")]
         private static extern bool DestroyIcon(IntPtr handle);
-        [DllImport("user32.dll")]
-        private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
-        [DllImport("user32.dll")]
-        private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
-        [DllImport("user32.dll")]
-        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
-        [DllImport("user32.dll")]
-        private static extern bool IsWindowVisible(IntPtr hWnd);
-        private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
         private void EnableResize()
         {
@@ -449,15 +407,11 @@ namespace DSHLauncher
                         wt.Stop();
                         if (PortAlive())
                         {
-                            if (AppAutoOpened)
-                                Log("Auto-open skipped (already opened this session)");
-                            else if (AppWindowExists())
+                            // 已有该网页的 Chrome 窗口则不重复打开（连接检测 + 窗口标题检测）
+                            if (AppWindowExists())
                                 Log("App window already open, skip auto-open");
                             else
-                            {
-                                AppAutoOpened = true;
                                 OpenWeb();
-                            }
                         }
                     }
                 };
@@ -2059,7 +2013,6 @@ namespace DSHLauncher
                         if (r != "Yes") return;
                         int oldPort = Port;
                         Port = p;
-                        AppAutoOpened = false;
                         Settings.SetInt("port", p);
                         UpdatePortUi();
                         Log("SECURITY: Port changed from " + oldPort + " to " + p);
