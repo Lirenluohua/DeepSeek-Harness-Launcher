@@ -332,7 +332,7 @@ namespace DSHLauncher
         private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
             const int WM_NCHITTEST = 0x0084;
-            const int border = 6;
+            const int border = 12;   // 覆盖 10px 阴影留白 + 热区
             if (msg == WM_NCHITTEST)
             {
                 int sx = (short)(lParam.ToInt64() & 0xFFFF);
@@ -2240,6 +2240,9 @@ namespace DSHLauncher
                 try { Registry.CurrentUser.DeleteSubKeyTree(@"Software\DeepSeekHarness", false); Log("Uninstall: settings removed"); }
                 catch { }
             }
+            // 删除控制面板卸载注册表条目
+            try { Registry.CurrentUser.DeleteSubKeyTree(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\DeepSeekHarnessLauncher", false); Log("Uninstall: control-panel entry removed"); }
+            catch { }
 
             try
             {
@@ -2379,6 +2382,7 @@ namespace DSHLauncher
             }
             catch { }
             try { Registry.CurrentUser.DeleteSubKeyTree(@"Software\DeepSeekHarness", false); } catch { }
+            try { Registry.CurrentUser.DeleteSubKeyTree(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\DeepSeekHarnessLauncher", false); } catch { }
 
             // 4. 延迟删除安装目录（含本程序）
             try
