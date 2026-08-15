@@ -1,0 +1,12 @@
+# 运行数据
+logs/
+*.log
+*.old
+.show
+
+# 构建产物（用 build.bat 重建）
+DeepSeekHarnessLauncher.exe
+
+# 系统
+Thumbs.db
+Desktop.ini
