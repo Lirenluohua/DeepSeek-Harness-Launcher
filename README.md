@@ -1,33 +1,64 @@
-﻿# DeepSeek Harness 鍚姩鍣?
-DeepSeek Harness 鐨勬湇鍔＄鐞嗗櫒锛圕# WPF 鍘熺敓鐗堬紝鐙珛 exe锛岄浂澶栭儴渚濊禆锛夈€?
-## 鍔熻兘
+# DeepSeek Harness 启动器
 
-- 鏈嶅姟鍚仠锛氬惎鍔?鍋滄 dsh web 鏈嶅姟锛堣嚜鍔ㄦ帰娴嬫崋缁戠幆澧冩垨鎵嬪姩鎸囧畾 dsh 璺緞锛?- 鍚姩鍙嶉锛氬惎鍔ㄤ腑鐘舵€佹彁绀猴紙鐞ョ弨鑹诧級銆侀槻閲嶅鐐瑰嚮銆?0 绉掕秴鏃朵繚鎶?- 鍚姩璇婃柇锛氱鍙ｈ鍗犵敤 / node 缂哄け / 鍚姩瓒呮椂 鍧囩粰鍑烘槑纭師鍥犱笌鎸囧紩
-- 瀹炴椂鐩戞帶锛欳PU / 鍐呭瓨 / 绔彛 / PID / 杩愯鏃堕暱
-- 璧勬簮瓒嬪娍鍥撅紙60 绉掞紝鍙姌鍙狅級
-- 鏃ュ織闈㈡澘锛氬叧閿瓧楂樹寒銆佽嚜瀹氫箟楂樹寒銆佹竻绌恒€佸鍑恒€佽嚜鍔ㄨ疆杞?- 娣?娴呬富棰橈紙鍙窡闅忕郴缁燂級
-- 绯荤粺鎵樼洏锛氱姸鎬佸浘鏍囷紙杩愯褰╄壊/鍋滄鏆楃伆锛夈€佽彍鍗曘€佸弻鍑绘仮澶?- Chrome 搴旂敤妯″紡鎵撳紑缃戦〉锛堣繛鎺ユ娴嬮伩鍏嶉噸澶嶆墦寮€锛屼笉渚濊禆绐楀彛鏍囬锛?- 鏈嶅姟寮傚父鑷姩閲嶅惎銆佺姸鎬侀€氱煡锛堝彲闈欓煶锛?- 绔彛鍙厤缃€佸紑鏈鸿嚜鍚€佸崟瀹炰緥鍞ら啋銆佺獥鍙ｅぇ灏?浣嶇疆璁板繂
-- 瀹夊叏锛氱洃鍚湴鍧€鏆撮湶妫€娴嬨€佹樉寮忕粦瀹?127.0.0.1銆佸畨鍏ㄦ搷浣滄棩蹇椼€佹晱鎰熻缃‘璁?- 鍐呯疆鍗歌浇绠＄悊锛堣缃?鈫?鍗歌浇 / 鍛戒护琛?`--uninstall`锛岃嚜鍔ㄦ竻鐞嗘帶鍒堕潰鏉挎潯鐩級
+DeepSeek Harness 的服务管理器（C# WPF 原生版，独立 exe，零外部依赖）。
 
-## 鏋勫缓
+## 功能
 
-闇€瑕?Windows 10/11锛堣嚜甯?.NET Framework 4.8 涓?csc 缂栬瘧鍣級銆?
+- 服务启停：启动/停止 dsh web 服务（自动探测捆绑环境或手动指定 dsh 路径）
+- 启动反馈：启动中状态提示（琥珀色）、防重复点击、40 秒超时保护
+- 启动诊断：端口被占用 / node 缺失 / 启动超时 均给出明确原因与指引
+- 实时监控：CPU / 内存 / 端口 / PID / 运行时长
+- 资源趋势图（60 秒，可折叠）
+- 日志面板：关键字高亮、自定义高亮、清空、导出、自动轮转
+- 深/浅主题（可跟随系统）
+- 系统托盘：状态图标（运行彩色/停止暗灰）、菜单、双击恢复
+- Chrome 应用模式打开网页（连接检测避免重复打开，不依赖窗口标题）
+- 服务异常自动重启、状态通知（可静音）
+- 端口可配置、开机自启、单实例唤醒、窗口大小/位置记忆
+- 安全：监听地址暴露检测、显式绑定 127.0.0.1、安全操作日志、敏感设置确认
+- 内置卸载管理（设置 → 卸载 / 命令行 `--uninstall`，自动清理控制面板条目）
+
+## 目录结构
+
+```
+DeepSeek-Harness-Launcher/
+├── src/launcher.cs          # 启动器全部源码（单文件）
+├── build.bat                # 编译启动器
+├── packaging/               # 一键安装器工程
+│   ├── Setup.cs             # 安装向导源码（C# WPF）
+│   ├── build-setup.bat      # 打包安装包脚本
+│   └── README.md
+├── DeepSeek Harness.ico     # 图标
+└── logs/                    # 运行日志（不入库）
+```
+
+## 构建启动器
+
+需要 Windows 10/11（自带 .NET Framework 4.8 与 csc 编译器）。
+
 ```bat
 build.bat
 ```
 
-杈撳嚭锛歚DeepSeekHarnessLauncher.exe`
+输出：`DeepSeekHarnessLauncher.exe`
 
-## 鐩綍缁撴瀯
+## 构建一键安装包
 
+安装包（约 34MB 单文件）内嵌：启动器、Node.js 22.23.2、dsh 包。目标机器离线可用、无需管理员。
+
+```bat
+cd packaging
+build-setup.bat
 ```
-launcher/
-鈹溾攢鈹€ src/launcher.cs          # 鍏ㄩ儴婧愮爜锛堝崟鏂囦欢锛?鈹溾攢鈹€ build.bat                # 鏋勫缓鑴氭湰
-鈹溾攢鈹€ DeepSeek Harness.ico     # 鍥炬爣
-鈹斺攢鈹€ logs/                    # 杩愯鏃ュ織锛堜笉鍏ュ簱锛?```
 
-## 瀹夎鍖?
-涓€閿畨瑁呭寘锛堝惈 Node.js 涓?dsh锛岀绾垮彲鐢級瑙?`Lirenluohua/DeepSeek-Harness-Setup` 浠撳簱锛屾垨鏈粨搴?Releases 椤典笅杞姐€?
-## 浣跨敤
+资源准备见 `packaging/README.md`（node.zip / dsh.zip 不入库，需按说明下载打包）。
 
-鍙屽嚮 `DeepSeekHarnessLauncher.exe`锛堟垨妗岄潰蹇嵎鏂瑰紡锛夊嵆鍙€?
+输出：`packaging/DeepSeekHarness-Setup.exe`
+
+## 安装包下载
+
+Releases 页（https://github.com/Lirenluohua/DeepSeek-Harness-Launcher/releases）可直接下载最新安装包。
+
+## 使用
+
+双击 `DeepSeekHarnessLauncher.exe`（或安装包生成的桌面快捷方式）即可。
