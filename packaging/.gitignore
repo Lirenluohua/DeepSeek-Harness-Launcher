@@ -1,0 +1,6 @@
+# 大文件不入库（构建时按 build-setup.bat 准备）
+node.zip
+dsh.zip
+dsh/
+DeepSeekHarness-Setup.exe
+*.log
