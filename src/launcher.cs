@@ -132,6 +132,8 @@ namespace DSHLauncher
         private WF.NotifyIcon Tray;
         private DispatcherTimer Timer;
         private bool LastState = false;
+        private bool Starting = false;
+        private DateTime StartingSince = DateTime.MinValue;
         private DateTime LastCpuTime = DateTime.MinValue;
         private TimeSpan LastCpuTick = TimeSpan.Zero;
         private bool HasCpuSample = false;
@@ -359,11 +361,39 @@ namespace DSHLauncher
         // ---------------- 服务启停 ----------------
         private void StartServer()
         {
-            if (PortAlive()) { Log("Server already running"); return; }
+            if (Starting) { Log("Start already in progress, ignored"); return; }
+            // 端口占用诊断：区分"我们的服务在跑"和"被其他程序占用"
+            if (PortAlive())
+            {
+                int lp = FindListenerPid();
+                bool isNode = false;
+                try
+                {
+                    Process pr = Process.GetProcessById(lp);
+                    isNode = (pr.ProcessName.ToLower() == "node");
+                }
+                catch { }
+                if (isNode)
+                {
+                    Log("Server already running");
+                    return;
+                }
+                string name = "未知程序";
+                try { Process pr = Process.GetProcessById(lp); name = pr.ProcessName + " (PID " + lp + ")"; } catch { }
+                Log("PORT BUSY: port " + Port + " occupied by " + name);
+                ShowConfirm("端口被占用", "端口 " + Port + " 已被进程 " + name + " 占用。\n请先停止该程序，或在设置中修改端口。", "OK");
+                return;
+            }
+            Starting = true;
+            StartingSince = DateTime.Now;
+            UpdateStatusUi(false);
+            Log("Starting dsh web... (首次启动可能需要 10-30 秒)");
             if (BinPath == null || !File.Exists(BinPath))
             {
                 Log("ERROR: bin.js not found");
-                ShowConfirm("服务无法启动", "未找到 dsh 程序 (bin.js)。\n请在设置中指定路径。", "OK");
+                ShowConfirm("服务无法启动", "未找到 dsh 程序 (bin.js)。\n请点击标题栏设置按钮，在「dsh 程序路径」中指定正确位置。", "OK");
+                Starting = false;
+                UpdateStatusUi(false);
                 return;
             }
             Log("Starting dsh web...");
@@ -392,7 +422,13 @@ namespace DSHLauncher
                 ServerProc.BeginErrorReadLine();
                 Log("Launched node pid=" + ServerProc.Id);
             }
-            catch (Exception ex) { Log("Start failed: " + ex.Message); }
+            catch (Exception ex)
+            {
+                Log("Start failed: " + ex.Message);
+                Starting = false;
+                UpdateStatusUi(false);
+                ShowConfirm("启动失败", "无法启动 Node.js：" + ex.Message + "\n\n可能原因：未安装 Node.js 或路径错误。\n建议使用安装包安装（自带运行环境），或在设置中指定 dsh 路径。", "OK");
+            }
 
             if (AutoOpenWeb)
             {
@@ -422,6 +458,7 @@ namespace DSHLauncher
         private void StopServer()
         {
             LastManualStop = DateTime.Now;
+            Starting = false;
             List<int> targets = new List<int>();
             int lp = FindListenerPid();
             if (lp > 0) targets.Add(lp);
@@ -762,6 +799,7 @@ namespace DSHLauncher
 
             BtnToggle = MakeButton("启动服务", "Accent", 104, 36, delegate()
             {
+                if (Starting) return;   // 启动中防重复点击
                 if (PortAlive())
                 {
                     string r = ShowConfirm("停止服务", "确定停止 DeepSeek Harness 服务？\n正在使用的会话将断开。", "YesNo");
@@ -769,7 +807,6 @@ namespace DSHLauncher
                 }
                 else
                 {
-                    TxtStatus.Text = "启动中…";
                     StartServer();
                     Log("Start requested from UI");
                 }
@@ -1350,6 +1387,7 @@ namespace DSHLauncher
                 if (running)
                 {
                     RunningSince = DateTime.Now;
+                    Starting = false;   // 启动完成
                     Log("State changed -> running");
                     try
                     {
@@ -1414,27 +1452,40 @@ namespace DSHLauncher
                         TxtMeta.Text = "PID " + pid + " · 运行 " + FormatDuration(DateTime.Now - RunningSince);
                     else
                         TxtMeta.Text = "PID " + pid + " · 启动 " + pr.StartTime.ToString("HH:mm:ss");
-                    DotStatus.Fill = Theme.Brush("Green");
-                    TxtStatus.Text = "运行中";
-                    TxtStatus.Foreground = Theme.Brush("Green");
-                    SetToggleButton(true);
                 }
                 catch
                 {
                     TxtProc.Text = "--";
-                    DotStatus.Fill = Theme.Brush("FgMuted");
-                    TxtStatus.Text = "运行中";
-                    TxtStatus.Foreground = Theme.Brush("Green");
                 }
             }
             else
             {
-                DotStatus.Fill = Theme.Brush("FgMuted");
-                TxtStatus.Text = "已停止";
-                TxtStatus.Foreground = Theme.Brush("FgSecondary");
-                SetToggleButton(false);
                 HasCpuSample = false;
             }
+            // 启动超时保护 + 失败诊断
+            if (Starting && !running && (DateTime.Now - StartingSince).TotalSeconds > 40)
+            {
+                Log("Start timeout (40s), diagnosing...");
+                Starting = false;
+                StringBuilder diag = new StringBuilder();
+                diag.AppendLine("服务在 40 秒内未就绪，可能原因：");
+                bool nodeAlive = (ServerProc != null && !ServerProc.HasExited);
+                diag.AppendLine(nodeAlive ? "· node 进程仍在运行（可能启动缓慢或配置问题）" : "· node 进程已退出");
+                if (File.Exists(ServerErr))
+                {
+                    string[] errLines = ReadTail(ServerErr, 6);
+                    bool hasErr = false;
+                    foreach (string el in errLines) { if (el.Trim().Length > 0) hasErr = true; }
+                    if (hasErr)
+                    {
+                        diag.AppendLine("· 错误输出：");
+                        foreach (string el in errLines) diag.AppendLine("    " + el);
+                    }
+                }
+                diag.AppendLine("请查看「运行日志」的 [server stderr] 部分排查。");
+                try { ShowConfirm("服务启动超时", diag.ToString(), "OK"); } catch { }
+            }
+            UpdateStatusUi(running);
             SysCheckCounter++;
             if (FollowSystem && SysCheckCounter % 20 == 0)
             {
@@ -1484,20 +1535,39 @@ namespace DSHLauncher
             catch { }
         }
 
-        private void SetToggleButton(bool running)
+        // 统一更新状态点/状态文字/启停按钮（含"启动中"状态）
+        private void UpdateStatusUi(bool running)
         {
             TextBlock t = (TextBlock)BtnToggle.Child;
-            if (running)
+            if (Starting)
             {
+                DotStatus.Fill = Theme.Brush("Amber");
+                TxtStatus.Text = "启动中…";
+                TxtStatus.Foreground = Theme.Brush("Amber");
+                BtnToggle.Background = Theme.Brush("Accent");
+                t.Text = "启动中…";
+                t.Foreground = Brushes.White;
+                BtnToggle.Opacity = 0.6;
+            }
+            else if (running)
+            {
+                DotStatus.Fill = Theme.Brush("Green");
+                TxtStatus.Text = "运行中";
+                TxtStatus.Foreground = Theme.Brush("Green");
                 BtnToggle.Background = Theme.Brush("Red");
                 t.Text = "停止服务";
                 t.Foreground = Brushes.White;
+                BtnToggle.Opacity = 1.0;
             }
             else
             {
+                DotStatus.Fill = Theme.Brush("FgMuted");
+                TxtStatus.Text = "已停止";
+                TxtStatus.Foreground = Theme.Brush("FgSecondary");
                 BtnToggle.Background = Theme.Brush("Accent");
                 t.Text = "启动服务";
                 t.Foreground = Brushes.White;
+                BtnToggle.Opacity = 1.0;
             }
         }
 
