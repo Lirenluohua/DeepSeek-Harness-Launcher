@@ -163,6 +163,12 @@ namespace DSHLauncher
         private Border TrendCard;
         private bool TrendCollapsed = (Settings.GetString("trendCollapsed", "off") == "on");
         private bool AutoStartChecked = false;
+        private bool UpdateAvailable = false;
+        private string UpdateLatestVer = "";
+        private Border BtnUpdateBtn;
+        private Grid UpdRow;
+        private ProgressBar UpdProgMain;
+        private TextBlock UpdStatusMain;
 
         public MainForm()
         {
@@ -191,6 +197,8 @@ namespace DSHLauncher
             StartTimer();
             InitFooter();
             Log("Launcher started (C# native, port=" + Port + ")");
+            // 启动后自动检查更新（后台，不阻塞）
+            Dispatcher.BeginInvoke(new Action(delegate() { AutoCheckUpdate(); }));
         }
 
         // ---------------- 工具 ----------------
@@ -203,6 +211,21 @@ namespace DSHLauncher
                 File.AppendAllText(LauncherLog, line + "\n", Encoding.UTF8);
             }
             catch { }
+        }
+
+        // 递归复制目录
+        private void CopyDir(string src, string dst)
+        {
+            Directory.CreateDirectory(dst);
+            foreach (string f in Directory.GetFiles(src))
+            {
+                string dest = Path.Combine(dst, Path.GetFileName(f));
+                File.Copy(f, dest, true);
+            }
+            foreach (string d in Directory.GetDirectories(src))
+            {
+                CopyDir(d, Path.Combine(dst, Path.GetFileName(d)));
+            }
         }
 
         private void RotateIfLarge(string path)
@@ -561,6 +584,13 @@ namespace DSHLauncher
 
         private string FindBin()
         {
+            // 0. 更新功能下载的新版 dsh（dsh-update 优先）
+            try
+            {
+                string updated = Path.Combine(AppDir, "dsh-update", "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
+                if (File.Exists(updated)) return updated;
+            }
+            catch { }
             // 1. 安装目录捆绑的 dsh（安装器安装的）
             try
             {
@@ -672,6 +702,7 @@ namespace DSHLauncher
             root.RowDefinitions.Add(new RowDefinition() { Height = GridLength.Auto });
             root.RowDefinitions.Add(new RowDefinition() { Height = GridLength.Auto });
             root.RowDefinitions.Add(new RowDefinition() { Height = new GridLength(1, GridUnitType.Star) });
+            root.RowDefinitions.Add(new RowDefinition() { Height = GridLength.Auto });
             root.RowDefinitions.Add(new RowDefinition() { Height = GridLength.Auto });
 
             // ===== 标题栏 =====
@@ -1023,10 +1054,33 @@ namespace DSHLauncher
             Grid.SetRow(TxtLog, 1);
             lg.Children.Add(TxtLog);
 
+            // ===== 更新进度条（主窗口常驻，跨窗口可见）=====
+            UpdRow = new Grid();
+            UpdRow.Margin = new Thickness(16, 4, 16, 0);
+            UpdRow.Visibility = Visibility.Collapsed;
+            Grid.SetRow(UpdRow, 5);
+            root.Children.Add(UpdRow);
+            UpdRow.ColumnDefinitions.Add(new ColumnDefinition() { Width = new GridLength(1, GridUnitType.Star) });
+            UpdRow.ColumnDefinitions.Add(new ColumnDefinition() { Width = GridLength.Auto });
+            UpdProgMain = new ProgressBar();
+            UpdProgMain.Height = 5;
+            UpdProgMain.Foreground = Theme.Brush("Accent");
+            UpdProgMain.Background = Theme.Brush("BgAlt");
+            UpdProgMain.Minimum = 0; UpdProgMain.Maximum = 100;
+            UpdProgMain.VerticalAlignment = VerticalAlignment.Center;
+            UpdRow.Children.Add(UpdProgMain);
+            UpdStatusMain = new TextBlock();
+            UpdStatusMain.FontSize = 10.5;
+            UpdStatusMain.Margin = new Thickness(10, 0, 0, 0);
+            UpdStatusMain.Foreground = Theme.Brush("Amber");
+            UpdStatusMain.VerticalAlignment = VerticalAlignment.Center;
+            Grid.SetColumn(UpdStatusMain, 1);
+            UpdRow.Children.Add(UpdStatusMain);
+
             // ===== 底部 =====
             Grid footer = new Grid();
             footer.Margin = new Thickness(16, 12, 16, 16);
-            Grid.SetRow(footer, 5);
+            Grid.SetRow(footer, 6);
             root.Children.Add(footer);
             footer.ColumnDefinitions.Add(new ColumnDefinition() { Width = new GridLength(1, GridUnitType.Star) });
             footer.ColumnDefinitions.Add(new ColumnDefinition() { Width = GridLength.Auto });
@@ -1105,6 +1159,251 @@ namespace DSHLauncher
             catch { }
             FooterVer = ver;
             TxtFooter.Text = ver;
+        }
+
+        // ---------------- 检查 / 更新 dsh ----------------
+        // 查询最新版本（后台可调用，不碰 UI）
+        private string QueryLatestVersion()
+        {
+            try
+            {
+                Process p = new Process();
+                p.StartInfo.FileName = "cmd.exe";
+                p.StartInfo.Arguments = "/c npm view @deepseek-ai/dsh version --registry=https://registry.npmmirror.com";
+                p.StartInfo.UseShellExecute = false;
+                p.StartInfo.CreateNoWindow = true;
+                p.StartInfo.RedirectStandardOutput = true;
+                p.StartInfo.RedirectStandardError = true;
+                p.Start();
+                System.Threading.Tasks.Task<string> outTask = p.StandardOutput.ReadToEndAsync();
+                System.Threading.Tasks.Task<string> errTask = p.StandardError.ReadToEndAsync();
+                p.WaitForExit(45000);
+                string output = outTask.Result;
+                string errout = errTask.Result;
+                if (output.Trim().Length == 0)
+                    Log("QueryLatest failed: " + (errout.Length > 200 ? errout.Substring(0, 200) : errout));
+                return output.Trim();
+            }
+            catch (Exception ex) { Log("QueryLatest error: " + ex.Message); return ""; }
+        }
+
+        // 启动时自动检查（后台，发现新版则提示 + 更新按钮变蓝）
+        private void AutoCheckUpdate()
+        {
+            System.Threading.Tasks.Task.Factory.StartNew(delegate()
+            {
+                string latest = QueryLatestVersion();
+                string cur = FooterVer.StartsWith("v") ? FooterVer.Substring(1) : FooterVer;
+                bool hasNew = (latest.Length > 0 && latest != cur);
+                Dispatcher.BeginInvoke(new Action(delegate()
+                {
+                    if (hasNew)
+                    {
+                        UpdateAvailable = true;
+                        UpdateLatestVer = latest;
+                        TxtFooter.Text = "发现新版本 v" + latest;
+                        Log("Update available: " + latest);
+                    }
+                }));
+            });
+        }
+
+        // 手动检查（设置窗口按钮）
+        private void CheckUpdate()
+        {
+            if (UpdateLatestVer.Length > 0) { ShowUpdatePrompt(UpdateLatestVer); return; }
+            TxtFooter.Text = "正在检查更新…";
+            System.Threading.Tasks.Task.Factory.StartNew(delegate()
+            {
+                string latest = QueryLatestVersion();
+                string cur = FooterVer.StartsWith("v") ? FooterVer.Substring(1) : FooterVer;
+                Dispatcher.BeginInvoke(new Action(delegate()
+                {
+                    TxtFooter.Text = FooterVer;
+                    if (latest.Length == 0)
+                    {
+                        ShowConfirm("检查更新", "无法获取最新版本（网络或镜像不可用）。\n请确认网络正常后重试。", "OK");
+                        return;
+                    }
+                    if (latest == cur)
+                        ShowConfirm("检查更新", "当前已是最新版本（" + cur + "）。", "OK");
+                    else
+                    {
+                        UpdateAvailable = true;
+                        UpdateLatestVer = latest;
+                        ShowUpdatePrompt(latest);
+                    }
+                }));
+            });
+        }
+
+        private void ShowUpdatePrompt(string latest)
+        {
+            string cur = FooterVer.StartsWith("v") ? FooterVer.Substring(1) : FooterVer;
+            string r = ShowConfirm("发现新版本", "当前版本: " + cur + "\n最新版本: " + latest + "\n\n是否立即更新？\n将下载新版 dsh，更新后需重启服务生效。", "YesNo");
+            if (r == "Yes") DoUpdate();
+        }
+
+        private void DoUpdate()
+        {
+            // 后台异步：下载新版 dsh 包 -> 直接覆盖现有 dsh（复用已有依赖，不做 npm 依赖安装）
+            Log("Update: downloading dsh...");
+            TxtFooter.Text = "正在更新 dsh…";
+            if (UpdRow != null) UpdRow.Visibility = Visibility.Visible;
+            if (UpdProgMain != null) UpdProgMain.Value = 0;
+            if (UpdStatusMain != null) UpdStatusMain.Text = "准备中…";
+            if (BtnUpdateBtn != null) BtnUpdateBtn.Opacity = 0.5;
+
+            System.Threading.Tasks.Task.Factory.StartNew(delegate()
+            {
+                string errInfo = "";
+                bool ok = false;
+                string newVer = "";
+                string pkgDir = "";
+                string backup = "";
+                string extractDir = "";
+                string tarball = "";
+                try
+                {
+                    // 目标：当前 dsh 包目录（node_modules/@deepseek-ai/dsh）
+                    if (BinPath == null || !File.Exists(BinPath)) throw new Exception("未找到当前 dsh 位置");
+                    pkgDir = Path.GetDirectoryName(Path.GetDirectoryName(BinPath));
+                    if (String.IsNullOrEmpty(pkgDir) || !Directory.Exists(pkgDir)) throw new Exception("dsh 包目录无效");
+
+                    // 1. 停止服务（避免文件占用）
+                    try { StopServer(); } catch { }
+
+                    // 2. 获取 tarball 下载地址
+                    string tarballUrl = "";
+                    try
+                    {
+                        Process pv = new Process();
+                        pv.StartInfo.FileName = "cmd.exe";
+                        pv.StartInfo.Arguments = "/c npm view @deepseek-ai/dsh dist.tarball --registry=https://registry.npmmirror.com";
+                        pv.StartInfo.UseShellExecute = false;
+                        pv.StartInfo.CreateNoWindow = true;
+                        pv.StartInfo.RedirectStandardOutput = true;
+                        pv.StartInfo.RedirectStandardError = true;
+                        pv.Start();
+                        System.Threading.Tasks.Task<string> oT = pv.StandardOutput.ReadToEndAsync();
+                        System.Threading.Tasks.Task<string> eT = pv.StandardError.ReadToEndAsync();
+                        pv.WaitForExit(30000);
+                        tarballUrl = oT.Result.Trim();
+                    }
+                    catch { }
+                    if (tarballUrl.Length == 0) throw new Exception("无法获取下载地址");
+
+                    // 3. 下载 tarball（真实字节进度 0-70%）
+                    tarball = Path.Combine(Path.GetTempPath(), "dsh-latest.tgz");
+                    using (System.Net.WebClient wc = new System.Net.WebClient())
+                    {
+                        wc.DownloadProgressChanged += delegate(object s, System.Net.DownloadProgressChangedEventArgs e)
+                        {
+                            int pct = (int)(e.ProgressPercentage * 0.7);
+                            Dispatcher.BeginInvoke(new Action(delegate()
+                            {
+                                if (UpdProgMain != null) UpdProgMain.Value = pct;
+                                if (UpdStatusMain != null) UpdStatusMain.Text = "正在下载 " + pct + "%";
+                            }));
+                        };
+                        wc.DownloadFile(tarballUrl, tarball);
+                    }
+
+                    // 4. 解压 tarball（Windows 自带 tar）
+                    extractDir = Path.Combine(Path.GetTempPath(), "dsh-extract-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+                    Directory.CreateDirectory(extractDir);
+                    SetUpdateStage(78, "正在解压…");
+                    Process tar = new Process();
+                    tar.StartInfo.FileName = "cmd.exe";
+                    tar.StartInfo.Arguments = "/c tar -xzf \"" + tarball + "\" -C \"" + extractDir + "\"";
+                    tar.StartInfo.UseShellExecute = false;
+                    tar.StartInfo.CreateNoWindow = true;
+                    tar.StartInfo.RedirectStandardOutput = true;
+                    tar.StartInfo.RedirectStandardError = true;
+                    tar.Start();
+                    System.Threading.Tasks.Task<string> tarOut = tar.StandardOutput.ReadToEndAsync();
+                    System.Threading.Tasks.Task<string> tarErr = tar.StandardError.ReadToEndAsync();
+                    bool tarExited = tar.WaitForExit(60000);
+                    if (!tarExited) { try { tar.Kill(); } catch { } throw new Exception("解压超时"); }
+                    string extractedPkg = Path.Combine(extractDir, "package");
+                    if (!Directory.Exists(extractedPkg)) throw new Exception("包解压失败");
+
+                    // 5. 备份并覆盖现有 dsh 包
+                    SetUpdateStage(88, "正在应用更新…");
+                    backup = pkgDir + ".bak";
+                    if (Directory.Exists(backup)) Directory.Delete(backup, true);
+                    Directory.Move(pkgDir, backup);
+                    try
+                    {
+                        CopyDir(extractedPkg, pkgDir);
+                    }
+                    catch
+                    {
+                        // 回滚
+                        try
+                        {
+                            if (Directory.Exists(pkgDir)) Directory.Delete(pkgDir, true);
+                            Directory.Move(backup, pkgDir);
+                        }
+                        catch { }
+                        throw;
+                    }
+                    try { if (Directory.Exists(backup)) Directory.Delete(backup, true); } catch { }
+
+                    // 6. 读新版本
+                    string pkgJson = Path.Combine(pkgDir, "package.json");
+                    if (File.Exists(pkgJson))
+                    {
+                        string txt = File.ReadAllText(pkgJson, Encoding.UTF8);
+                        Match m = Regex.Match(txt, "\"version\"\\s*:\\s*\"([^\"]+)\"");
+                        if (m.Success) newVer = m.Groups[1].Value;
+                    }
+                    ok = File.Exists(Path.Combine(pkgDir, "lib", "bin.js"));
+                }
+                catch (Exception ex)
+                {
+                    errInfo = ex.Message;
+                    ok = false;
+                    // 失败时尝试恢复备份
+                    try
+                    {
+                        if (backup.Length > 0 && Directory.Exists(backup) && pkgDir.Length > 0 && !Directory.Exists(pkgDir))
+                            Directory.Move(backup, pkgDir);
+                    }
+                    catch { }
+                }
+                // 清理临时
+                try { if (extractDir.Length > 0 && Directory.Exists(extractDir)) Directory.Delete(extractDir, true); } catch { }
+                try { if (tarball.Length > 0 && File.Exists(tarball)) File.Delete(tarball); } catch { }
+
+                string logMsg = ok ? ("Update: dsh replaced to " + newVer) : ("Update failed: " + (errInfo.Length > 300 ? errInfo.Substring(0, 300) : errInfo));
+                Dispatcher.BeginInvoke(new Action(delegate()
+                {
+                    TxtFooter.Text = FooterVer;
+                    if (UpdRow != null) UpdRow.Visibility = Visibility.Collapsed;
+                    if (UpdProgMain != null) UpdProgMain.Value = 0;
+                    if (BtnUpdateBtn != null) BtnUpdateBtn.Opacity = 1.0;
+                    Log(logMsg);
+                    if (ok)
+                    {
+                        UpdateAvailable = false;
+                        UpdateLatestVer = "";
+                        ShowConfirm("更新完成", "dsh 已更新到 " + newVer + "。\n启动服务后生效。", "OK");
+                    }
+                    else
+                        ShowConfirm("更新失败", "更新未完成（" + errInfo + "）。", "OK");
+                }));
+            });
+        }
+
+        // 更新阶段提示（后台线程调用，UI 经 Dispatcher）
+        private void SetUpdateStage(int pct, string msg)
+        {
+            Dispatcher.BeginInvoke(new Action(delegate()
+            {
+                if (UpdProgMain != null) UpdProgMain.Value = pct;
+                if (UpdStatusMain != null) UpdStatusMain.Text = msg;
+            }));
         }
 
         private Border MakeToggle()
@@ -1462,15 +1761,24 @@ namespace DSHLauncher
             {
                 HasCpuSample = false;
             }
-            // 启动超时保护 + 失败诊断
-            if (Starting && !running && (DateTime.Now - StartingSince).TotalSeconds > 40)
+            // 启动保护 + 失败诊断：
+            // - node 进程已退出 → 立即诊断（启动失败）
+            // - node 仍在运行 → 最多等 120 秒（首次启动/冷启动较慢，不误报）
+            if (Starting && !running)
             {
-                Log("Start timeout (40s), diagnosing...");
-                Starting = false;
-                StringBuilder diag = new StringBuilder();
-                diag.AppendLine("服务在 40 秒内未就绪，可能原因：");
-                bool nodeAlive = (ServerProc != null && !ServerProc.HasExited);
-                diag.AppendLine(nodeAlive ? "· node 进程仍在运行（可能启动缓慢或配置问题）" : "· node 进程已退出");
+                bool nodeGone = (ServerProc == null || ServerProc.HasExited);
+                double elapsed = (DateTime.Now - StartingSince).TotalSeconds;
+                if (nodeGone || elapsed > 120)
+                {
+                    Log("Start diagnosis: nodeGone=" + nodeGone + " elapsed=" + Math.Round(elapsed) + "s");
+                    Starting = false;
+                    StringBuilder diag = new StringBuilder();
+                    if (nodeGone)
+                        diag.AppendLine("服务进程已退出，启动失败。可能原因：");
+                    else
+                        diag.AppendLine("服务在 120 秒内未就绪，可能原因：");
+                    bool nodeAlive = (ServerProc != null && !ServerProc.HasExited);
+                    diag.AppendLine(nodeAlive ? "· node 进程仍在运行（可能启动缓慢或配置问题）" : "· node 进程已退出");
                 if (File.Exists(ServerErr))
                 {
                     string[] errLines = ReadTail(ServerErr, 6);
@@ -1484,6 +1792,7 @@ namespace DSHLauncher
                 }
                 diag.AppendLine("请查看「运行日志」的 [server stderr] 部分排查。");
                 try { ShowConfirm("服务启动超时", diag.ToString(), "OK"); } catch { }
+                }
             }
             UpdateStatusUi(running);
             SysCheckCounter++;
@@ -1907,7 +2216,7 @@ namespace DSHLauncher
             Grid g = new Grid();
             g.Margin = new Thickness(20, 16, 20, 18);
             dBorder.Child = g;
-            for (int i = 0; i < 7; i++)
+            for (int i = 0; i < 8; i++)
                 g.RowDefinitions.Add(new RowDefinition() { Height = GridLength.Auto });
 
             Grid head = new Grid();
@@ -2168,13 +2477,42 @@ namespace DSHLauncher
             c4lb.Foreground = Theme.Brush("FgSecondary");
             c4row.Children.Add(c4lb);
 
-            // 分组 5: 卸载（按钮文字明确，避免误解）
+            // 分组 5: 更新
+            Border cardUpd = new Border();
+            cardUpd.Margin = new Thickness(0, 10, 0, 0);
+            cardUpd.CornerRadius = new CornerRadius(10);
+            cardUpd.Background = Theme.Brush("BgCard");
+            cardUpd.Padding = new Thickness(14, 10, 14, 10);
+            Grid.SetRow(cardUpd, 5);
+            g.Children.Add(cardUpd);
+            StackPanel cupd = new StackPanel();
+            cardUpd.Child = cupd;
+            TextBlock cupdT = new TextBlock();
+            cupdT.Text = "更新";
+            cupdT.FontSize = 12; cupdT.FontWeight = FontWeights.SemiBold;
+            cupdT.Foreground = Theme.Brush("FgPrimary");
+            cupd.Children.Add(cupdT);
+            TextBlock cupdVer = new TextBlock();
+            cupdVer.Text = "当前 dsh 版本: " + (FooterVer.Length > 0 ? FooterVer : "未知");
+            cupdVer.FontSize = 11;
+            cupdVer.Margin = new Thickness(0, 6, 0, 0);
+            cupdVer.Foreground = Theme.Brush("FgMuted");
+            cupd.Children.Add(cupdVer);
+            BtnUpdateBtn = MakeDialogButton(UpdateAvailable ? "发现新版本！" : "检查更新",
+                UpdateAvailable ? "Accent" : "BgCardAlt",
+                delegate() { dlg.Close(); CheckUpdate(); });
+            BtnUpdateBtn.Width = 104; BtnUpdateBtn.Height = 28;
+            BtnUpdateBtn.HorizontalAlignment = HorizontalAlignment.Right;
+            BtnUpdateBtn.Margin = new Thickness(0, 10, 0, 0);
+            cupd.Children.Add(BtnUpdateBtn);
+
+            // 分组 6: 卸载（按钮文字明确，避免误解）
             Border card5 = new Border();
             card5.Margin = new Thickness(0, 10, 0, 0);
             card5.CornerRadius = new CornerRadius(10);
             card5.Background = Theme.Brush("BgCard");
             card5.Padding = new Thickness(14, 10, 14, 10);
-            Grid.SetRow(card5, 5);
+            Grid.SetRow(card5, 6);
             g.Children.Add(card5);
             StackPanel c5 = new StackPanel();
             card5.Child = c5;
@@ -2197,7 +2535,7 @@ namespace DSHLauncher
 
             Grid foot = new Grid();
             foot.Margin = new Thickness(0, 14, 0, 0);
-            Grid.SetRow(foot, 6);
+            Grid.SetRow(foot, 7);
             g.Children.Add(foot);
             Border btnDone = MakeDialogButton("完成", "Accent", delegate() { dlg.Close(); });
             btnDone.HorizontalAlignment = HorizontalAlignment.Right;
