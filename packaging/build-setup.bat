@@ -23,6 +23,11 @@ if not exist "%RES_ICO%" ( echo [ERROR] ico missing & exit /b 1 )
 if not exist "%DIR%node.zip" ( echo [ERROR] node.zip missing - download: & echo   curl -L -o node.zip https://npmmirror.com/mirrors/node/v22.23.2/node-v22.23.2-win-x64.zip & exit /b 1 )
 if not exist "%DIR%dsh.zip" ( echo [ERROR] dsh.zip missing & exit /b 1 )
 
+rem 2b. Pack the dsh vision patches (writeback.ps1 + two patched index.js)
+if not exist "%DIR%..\patches\dsh-vision\writeback.ps1" ( echo [ERROR] vision patch missing & exit /b 1 )
+powershell -NoProfile -Command "Compress-Archive -Path '%DIR%..\patches\dsh-vision\*' -DestinationPath '%DIR%dsh-vision.zip' -Force"
+if not exist "%DIR%dsh-vision.zip" ( echo [ERROR] dsh-vision.zip packaging failed & exit /b 1 )
+
 rem 3. Compile setup with embedded resources
 "%CSC%" /nologo /target:winexe /codepage:65001 "/out:%OUT%" ^
   /r:System.dll /r:System.Core.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll ^
@@ -35,6 +40,7 @@ rem 3. Compile setup with embedded resources
   "/resource:%RES_ICO%,icon.ico" ^
   "/resource:%DIR%node.zip,node.zip" ^
   "/resource:%DIR%dsh.zip,dsh.zip" ^
+  "/resource:%DIR%dsh-vision.zip,dsh-vision.zip" ^
   "%DIR%Setup.cs"
 
 if exist "%OUT%" (

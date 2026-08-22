@@ -648,6 +648,16 @@ namespace DSHSetup
             File.Delete(Path.Combine(Path.GetTempPath(), "dsh-tmp.zip"));
             Log("dsh extracted");
 
+            SetProgress(82, "Install dsh vision patch?");
+            Directory.CreateDirectory(Path.Combine(InstallDir, "patches", "dsh-vision"));
+            ExtractResource(asm, "dsh-vision.zip", Path.Combine(Path.GetTempPath(), "dsh-vision.zip"));
+            using (ZipArchive za2 = ZipFile.OpenRead(Path.Combine(Path.GetTempPath(), "dsh-vision.zip")))
+            {
+                za2.ExtractToDirectory(Path.Combine(InstallDir, "patches", "dsh-vision"));
+            }
+            File.Delete(Path.Combine(Path.GetTempPath(), "dsh-vision.zip"));
+            Log("dsh vision patch extracted");
+
             SetProgress(88, "创建快捷方式与注册…");
             if (ChkShortcutVal[0]) CreateShortcut(InstallDir);
             if (ChkAutoStartVal[0]) SetAutoStart(InstallDir);

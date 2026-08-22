@@ -420,6 +420,7 @@ namespace DSHLauncher
                 return;
             }
             Log("Starting dsh web...");
+            ApplyVisionPatch();
             try
             {
                 ProcessStartInfo psi = new ProcessStartInfo(FindNode(), "\"" + BinPath + "\" --profile web --port " + Port + " --host 127.0.0.1");
@@ -625,6 +626,30 @@ namespace DSHLauncher
             }
             catch { }
             return "node";
+        }
+
+        // 启动服务前恢复 dsh vision patch（dsh 依赖升级可能覆盖）
+        private void ApplyVisionPatch()
+        {
+            try
+            {
+                string psFile = Path.Combine(AppDir, "patches", "dsh-vision", "writeback.ps1");
+                if (!File.Exists(psFile)) { Log("Vision patch: not found, skip"); return; }
+                string powerShell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");
+                if (!File.Exists(powerShell)) powerShell = "powershell";
+                string dshRoot = Path.Combine(AppDir, "dsh");
+                string arg = "-NoProfile -ExecutionPolicy Bypass -File \"" + psFile + "\"";
+                if (Directory.Exists(dshRoot)) arg += " -DshRoot \"" + dshRoot + "\"";
+                ProcessStartInfo psi = new ProcessStartInfo(powerShell, arg);
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                psi.WindowStyle = ProcessWindowStyle.Hidden;
+                Log("Vision patch: applying...");
+                Process p = Process.Start(psi);
+                if (p != null) { if (!p.WaitForExit(15000)) { try { p.Kill(); } catch { } } }
+                Log("Vision patch: done");
+            }
+            catch (Exception ex) { Log("Vision patch skipped: " + ex.Message); }
         }
 
         // ---------------- UI 构建 ----------------
